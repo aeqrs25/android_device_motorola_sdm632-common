@@ -38,6 +38,8 @@ namespace implementation {
 #define DELAY_OFF       "delay_off"
 #define DELAY_ON        "delay_on"
 
+#define MAX_LED_BRIGHTNESS    64
+#define MAX_LCD_BRIGHTNESS    255
 /*
  * Write value to path and close file.
  */
@@ -55,46 +57,63 @@ static void set(std::string path, std::string value) {
 static void set(std::string path, int value) {
     set(path, std::to_string(value));
 }
-    
-static uint32_t rgbToBrightness(const LightState& state) {
-    uint32_t color = state.color & 0x00ffffff;
-    return ((77 * ((color >> 16) & 0xff)) + (150 * ((color >> 8) & 0xff)) +
-            (29 * (color & 0xff))) >> 8;
-}
 
-static void handleBacklight(const LightState& state) {
-    uint32_t brightness = rgbToBrightness(state);
-    set(LCD_LED BRIGHTNESS, brightness);
-}
-
-static void handleNotification(const LightState& state) {
-    uint32_t alpha, brightness;
+static uint32_t getBrightness(const LightState& state) {
+    uint32_t alpha, red, green, blue;
 
     /*
      * Extract brightness from AARRGGBB.
      */
     alpha = (state.color >> 24) & 0xFF;
-    brightness = rgbToBrightness(state);
+    red = (state.color >> 16) & 0xFF;
+    green = (state.color >> 8) & 0xFF;
+    blue = state.color & 0xFF;
 
     /*
-     * Scale brightness if the Alpha brightness is not 0xFF.
+     * Scale RGB brightness if Alpha brightness is not 0xFF.
      */
-    if (alpha != 0xFF)
-        brightness = (brightness * alpha) / 0xFF;
-    
-    /* Disable blinking. */
-    set(CHARGING_LED BREATH, 0);
-
-    if (state.flashMode == Flash::TIMED) {
-        /* Set LED */
-        set(CHARGING_LED DELAY_OFF, state.flashOffMs);
-        set(CHARGING_LED DELAY_ON, state.flashOnMs);
-
-        /* Enable blinking. */
-        set(CHARGING_LED BREATH, 1);
-    } else {
-        set(CHARGING_LED BRIGHTNESS, brightness);
+    if (alpha != 0xFF) {
+        red = red * alpha / 0xFF;
+        green = green * alpha / 0xFF;
+        blue = blue * alpha / 0xFF;
     }
+
+    return (77 * red + 150 * green + 29 * blue) >> 8;
+}
+
+static inline uint32_t scaleBrightness(uint32_t brightness, uint32_t maxBrightness) {
+    if (brightness == 0) {
+        return 0;
+    }
+
+    return (brightness - 1) * (maxBrightness - 1) / (0xFF - 1) + 1;
+}
+
+static inline uint32_t getScaledBrightness(const LightState& state, uint32_t maxBrightness) {
+    return scaleBrightness(getBrightness(state), maxBrightness);
+}
+
+static void handleBacklight(const LightState& state) {
+    uint32_t brightness = getScaledBrightness(state, MAX_LCD_BRIGHTNESS);
+    set(LCD_LED BRIGHTNESS, brightness);
+}
+
+static void handleNotification(const LightState& state) {
+    uint32_t whiteBrightness = getScaledBrightness(state, MAX_LED_BRIGHTNESS);
+
+    /* Disable blinking. */
+     set(CHARGING_LED BREATH, 0);
+
+     if (state.flashMode == Flash::TIMED) {
+         /* Set LED */
+         set(CHARGING_LED DELAY_OFF, state.flashOffMs);
+         set(CHARGING_LED DELAY_ON, state.flashOnMs);
+
+         /* Enable blinking. */
+         set(CHARGING_LED BREATH, 1);
+     } else {
+         set(CHARGING_LED BRIGHTNESS, whiteBrightness);
+     }
 }
 
 static std::map<Type, std::function<void(const LightState&)>> lights = {
